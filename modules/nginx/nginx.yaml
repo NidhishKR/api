@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  VPC:
+    Type: String
+    Description: Provide the VPC ID.
+  TagName:
+    Type: String
+    Description: Tag Name of your Infrastructure.
+  ECSClusterName:
+    Type: String
+    Description: Name of an existing ECS Cluster. 
+  PublicSubnetAZ1:
+    Description: Public Subnet ID in Availability Zone 1.
+    Type: String
+  PublicSubnetAZ2:
+    Description: Public Subnet ID in Availability Zone 2.
+    Type: String
+  PublicSecurityGroupID:
+    Description: Public Security Group ID for LoadBalancer.
+    Type: String
+Resources:
+  CloudwatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['-', [NginxLogGroup, !Ref 'AWS::StackName']]
+      RetentionInDays: 14
+  NginxTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: Nginx
+      ContainerDefinitions:
+      - Name: nginx
+        Cpu: '256'
+        Essential: 'true'
+        Image: nginx
+        Memory: '128'
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: !Ref 'CloudwatchLogsGroup'
+            awslogs-region: !Ref 'AWS::Region'
+            awslogs-stream-prefix: nginx
+        PortMappings:
+        - ContainerPort: 80
+          HostPort: 80
+      Volumes:
+      - Name: my-vol
+  NginxService:
+    Type: AWS::ECS::Service
+    DependsOn: NginxALBListener
+    Properties:
+      Cluster: !Ref 'ECSClusterName'
+      DesiredCount: '1'
+      LoadBalancers:
+      - ContainerName: nginx
+        ContainerPort: '80'
+        TargetGroupArn: !Ref 'NginxTargetGroup'
+      Role: !Ref 'ECSServiceRole'
+      TaskDefinition: !Ref 'NginxTaskDefinition'
+  ECSServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+  ECSServicePolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: "ecs-service"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: ['elasticloadbalancing:*', 'ec2:*']
+            Resource: '*'
+      Roles: [!Ref 'ECSServiceRole']
+  NginxALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: Nginx-ALB
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '30'
+      Subnets:
+        - !Ref PublicSubnetAZ1
+        - !Ref PublicSubnetAZ2
+      SecurityGroups:
+        - !Ref PublicSecurityGroupID
+  NginxTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: NginxALB
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Name: Nginx
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      VpcId:
+        Fn::ImportValue:
+          Fn::Sub: "${TagName}-VpcId"
+  NginxALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn: ECSServiceRole
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref 'NginxTargetGroup'
+      LoadBalancerArn: !Ref 'NginxALB'
+      Port: '80'
+      Protocol: HTTP
+  ECSALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DependsOn: NginxALBListener
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref 'NginxTargetGroup'
+      Conditions:
+      - Field: path-pattern
+        Values: [/]
+      ListenerArn: !Ref 'NginxALBListener'
+      Priority: 1
+  NginxAPI:
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Description: "Demo API for Nginx application"
+      Name: "NginxAPI"
+  NginxResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      RestApiId: !Ref NginxAPI
+      ParentId: !GetAtt [NginxAPI, RootResourceId]
+      PathPart: '{proxy+}'
+  NginxMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId: !Ref NginxAPI
+      ResourceId: !Ref NginxResource
+      HttpMethod: ANY
+      AuthorizationType: "NONE"
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: GET
+        Uri: !Join ['', ["http://", !GetAtt NginxALB.DNSName, "/{proxy}"]]
+  NginxMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId: !Ref NginxAPI
+      ResourceId: !GetAtt [NginxAPI, RootResourceId]
+      HttpMethod: ANY
+      AuthorizationType: "NONE"
+      Integration:
+        Type: "HTTP"
+        IntegrationHttpMethod: "GET"
+        Uri: !Join ['', ["http://", !GetAtt NginxALB.DNSName]]
+        IntegrationResponses:
+          - StatusCode: 200
+      MethodResponses:
+        - StatusCode: 200
+  APIDeployment:
+    DependsOn: NginxMethod
+    Type: "AWS::ApiGateway::Deployment"
+    Properties:
+      RestApiId:
+        Ref: "NginxAPI"
+      Description: "Deployment of Nginx application"
+      StageName: "DummyStage"
+  DevelopmentAPIStage:
+    Type: "AWS::ApiGateway::Stage"
+    Properties:
+      StageName: "Development"
+      Description: "Stage for Development environment"
+      RestApiId:
+        Ref: "NginxAPI"
+      DeploymentId:
+        Ref: "APIDeployment"
+      MethodSettings:
+        -
+          ResourcePath: "/*"
+          HttpMethod: "*"
+          MetricsEnabled: "true"
+          DataTraceEnabled: "true"
+Outputs:
+  ecsservice:
+    Value: !Ref 'NginxService'
+  NginxURL:
+    Value: !Join ['', ["https://", !Ref 'NginxAPI', ".execute-api.", !Ref 'AWS::Region', ".amazonaws.com"]]

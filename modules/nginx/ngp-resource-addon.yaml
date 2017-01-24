@@ -1,0 +1,12 @@
+  
+  Nginx:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/S3_BUCKET_NAME/templates/nginx/nginx.yaml
+      Parameters:
+        TagName: !Ref 'TagName'
+        ECSClusterName: !GetAtt 'ECS.Outputs.ECSClusterName'
+        VPC: !GetAtt 'Infrastructure.Outputs.VPCId'
+        PublicSubnetAZ1: !GetAtt Infrastructure.Outputs.PublicSubnetAZ1
+        PublicSubnetAZ2: !GetAtt Infrastructure.Outputs.PublicSubnetAZ2
+        PublicSecurityGroupID: !GetAtt Infrastructure.Outputs.PublicSecurityGroup

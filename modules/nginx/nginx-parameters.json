@@ -1,0 +1,22 @@
+[
+  {
+    "ParameterKey":"TagName",
+    "ParameterValue":"dev"
+  },
+  {
+    "ParameterKey":"PublicSubnetAZ1",
+    "ParameterValue":"subnet-d1a3d0b5"
+  },
+  {
+    "ParameterKey":"PublicSubnetAZ2",
+    "ParameterValue":"subnet-26284950"
+  },
+  {
+    "ParameterKey":"PublicSecurityGroupID",
+    "ParameterValue":"sg-cce442ab"
+  },
+  {
+    "ParameterKey":"ECSClusterName",
+    "ParameterValue":"dev-ecs"
+  }
+]
